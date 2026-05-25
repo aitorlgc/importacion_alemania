@@ -1,14 +1,13 @@
-import TableClient from "@/components/TableClient";
-import { loadAnalysis } from "@/lib/loadAnalysis";
+import { statSync } from 'fs'
+import path from 'path'
+import { loadAnalysis } from '@/lib/loadAnalysis'
+import DashboardClient from '@/components/DashboardClient'
 
 export default function Home() {
-  const rows = loadAnalysis();
+  const cars = loadAnalysis()
 
-  return (
-    <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
-      <h1>Oportunidades de importación (DE → ES)</h1>
-      <p>Dashboard a partir del CSV generado por el notebook.</p>
-      <TableClient rows={rows} />
-    </main>
-  );
+  const csvPath = path.join(process.cwd(), 'data', 'analisis_arbitraje_coches_final.csv')
+  const lastUpdated = statSync(csvPath).mtime.toISOString()
+
+  return <DashboardClient cars={cars} lastUpdated={lastUpdated} />
 }
