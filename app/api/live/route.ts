@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   // Fetch German listings and Spanish price index in parallel
   const [deResults, spIndex] = await Promise.all([
     Promise.allSettled(
-      makes.map(make => fetchAutoScout(make, 'DE', 1, 20))
+      makes.map(make => fetchAutoScout(make, 'DE', 1))
     ),
     buildSpanishPriceIndex(makes),
   ])

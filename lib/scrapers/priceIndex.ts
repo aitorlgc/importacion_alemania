@@ -53,7 +53,7 @@ export async function buildSpanishPriceIndex(makes: string[]): Promise<PriceInde
   await Promise.allSettled(
     makes.map(async (make) => {
       try {
-        const { listings } = await fetchAutoScout(make, 'ES', 1, 30)
+        const { listings } = await fetchAutoScout(make, 'ES', 1)
         allListings.push(...listings)
       } catch (err) {
         console.warn(`[priceIndex] ES/${make}:`, err instanceof Error ? err.message : err)

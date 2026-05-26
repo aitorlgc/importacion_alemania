@@ -146,11 +146,12 @@ function mapItem(item: any): AScoutListing {
   }
 }
 
+// AutoScout24 URL format: /lst/{make} — model goes as query param, not in path
+// /lst/{make}/{model-variant} returns 404; use mmvco[] for filtering by model
 export async function fetchAutoScout(
   make: string,
   country: 'DE' | 'ES',
   page = 1,
-  pageSize = 20
 ): Promise<{ listings: AScoutListing[]; total: number }> {
   const domain = country === 'DE' ? 'autoscout24.de' : 'autoscout24.es'
   const cy = country === 'DE' ? 'D' : 'E'
@@ -158,6 +159,7 @@ export async function fetchAutoScout(
 
   const makeSlug = make.toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]/g, '')
 
+  // AutoScout24 accepts page param but NOT sizepage — always returns ~20 results
   const params = new URLSearchParams({
     atype: 'C',
     cy,
@@ -166,8 +168,7 @@ export async function fetchAutoScout(
     desc: '1',
     damaged_listing: 'exclude',
     ustate: 'N,U',
-    page: String(page),
-    sizepage: String(pageSize),
+    ...(page > 1 ? { page: String(page) } : {}),
   })
 
   const url = `https://www.${domain}/lst/${makeSlug}?${params}`
