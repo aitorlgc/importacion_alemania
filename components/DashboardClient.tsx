@@ -11,6 +11,8 @@ import OpportunityTable from './OpportunityTable'
 import ChartsSection from './ChartsSection'
 import CostBreakdownModal from './CostBreakdownModal'
 import CostConfigPanel from './CostConfigPanel'
+import LiveSearchSection from './LiveSearchSection'
+import { Database, Wifi } from 'lucide-react'
 
 type SortKey = 'make' | 'model' | 'year' | 'km' | 'price' | 'precioVentaEspana' | 'matriculacionTaxRate' | 'totalCost' | 'profit' | 'marginPct'
 
@@ -79,6 +81,7 @@ interface Props {
 }
 
 export default function DashboardClient({ cars, lastUpdated }: Props) {
+  const [activeTab, setActiveTab] = useState<'csv' | 'live'>('live')
   const [costConfig, setCostConfig] = useState<CostConfig>(DEFAULT_COST_CONFIG)
   const [filters, setFilters] = useState<FilterState>(() => getDefaultFilters(cars))
   const [selectedCar, setSelectedCar] = useState<EnrichedCar | null>(null)
@@ -116,31 +119,65 @@ export default function DashboardClient({ cars, lastUpdated }: Props) {
         onConfigOpen={() => setConfigPanelOpen(true)}
       />
 
-      <div className="flex flex-1 overflow-hidden">
-        <FiltersPanel
-          filters={filters}
-          onFiltersChange={handleFiltersChange}
-          allCars={enrichedCars}
-        />
+      {/* Tab switcher */}
+      <div className="bg-white border-b border-slate-200 px-6 flex items-center gap-1">
+        <button
+          onClick={() => setActiveTab('live')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'live'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Wifi size={14} />
+          En vivo · AutoScout24
+        </button>
+        <button
+          onClick={() => setActiveTab('csv')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'csv'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Database size={14} />
+          Histórico · CSV
+        </button>
+      </div>
 
-        <main className="flex-1 overflow-y-auto scrollbar-thin p-6 space-y-6 min-w-0">
-          <StatsCards cars={filteredCars} />
+      {/* Live tab */}
+      {activeTab === 'live' && (
+        <LiveSearchSection costConfig={costConfig} />
+      )}
 
-          <OpportunityTable
-            cars={pagedCars}
-            total={sortedCars.length}
-            page={currentPage}
-            pageSize={PAGE_SIZE}
-            sortKey={sortKey}
-            sortDir={sortDir}
-            onSort={handleSort}
-            onPageChange={setCurrentPage}
-            onRowClick={setSelectedCar}
+      {/* CSV tab */}
+      {activeTab === 'csv' && (
+        <div className="flex flex-1 overflow-hidden">
+          <FiltersPanel
+            filters={filters}
+            onFiltersChange={handleFiltersChange}
+            allCars={enrichedCars}
           />
 
-          <ChartsSection cars={filteredCars} />
-        </main>
-      </div>
+          <main className="flex-1 overflow-y-auto scrollbar-thin p-6 space-y-6 min-w-0">
+            <StatsCards cars={filteredCars} />
+
+            <OpportunityTable
+              cars={pagedCars}
+              total={sortedCars.length}
+              page={currentPage}
+              pageSize={PAGE_SIZE}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={handleSort}
+              onPageChange={setCurrentPage}
+              onRowClick={setSelectedCar}
+            />
+
+            <ChartsSection cars={filteredCars} />
+          </main>
+        </div>
+      )}
 
       {selectedCar && (
         <CostBreakdownModal car={selectedCar} onClose={() => setSelectedCar(null)} />
