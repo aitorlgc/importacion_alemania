@@ -1,13 +1,15 @@
 import { fetchAutoScout, type AScoutListing } from './autoscout'
 import { getCache, setCache } from '../cache'
 
-// Spanish price index: maps `make|model|yearBucket` → median price in Spain
 export type PriceIndex = Map<string, number>
 
 const TTL_MS = 3 * 60 * 60 * 1000 // 3 hours
+// Fetch more pages per make so each make|model|year bucket has enough data points for a
+// reliable median. 1 page ≈ 20 listings spread across dozens of buckets → too noisy.
+// 5 pages ≈ 100 listings per make, giving ~5-10 samples per bucket on popular models.
+const ES_PAGES = 5
 
 function yearBucket(year: number): number {
-  // Group into 2-year windows for more data points per bucket
   return Math.floor(year / 2) * 2
 }
 
@@ -24,6 +26,17 @@ function median(values: number[]): number {
     : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
+// IQR-based outlier removal — keeps prices within [Q1 - 1.5·IQR, Q3 + 1.5·IQR]
+function removeOutliers(values: number[]): number[] {
+  if (values.length < 4) return values
+  const sorted = [...values].sort((a, b) => a - b)
+  const q1 = sorted[Math.floor(sorted.length * 0.25)]
+  const q3 = sorted[Math.floor(sorted.length * 0.75)]
+  const iqr = q3 - q1
+  if (iqr === 0) return sorted
+  return sorted.filter(v => v >= q1 - 1.5 * iqr && v <= q3 + 1.5 * iqr)
+}
+
 function buildIndex(listings: AScoutListing[]): PriceIndex {
   const groups = new Map<string, number[]>()
 
@@ -37,28 +50,35 @@ function buildIndex(listings: AScoutListing[]): PriceIndex {
 
   const index: PriceIndex = new Map()
   groups.forEach((prices, key) => {
-    index.set(key, median(prices))
+    const clean = removeOutliers(prices)
+    index.set(key, median(clean))
   })
 
   return index
 }
 
 export async function buildSpanishPriceIndex(makes: string[]): Promise<PriceIndex> {
-  const cacheKey = `es-price-index::${makes.slice().sort().join(',')}`
+  // v2 cache key invalidates old single-page cache
+  const cacheKey = `es-price-index-v2::${makes.slice().sort().join(',')}`
   const cached = getCache<PriceIndex>(cacheKey)
   if (cached) return cached
 
   const allListings: AScoutListing[] = []
 
+  // Fetch all pages for all makes concurrently; individual failures don't abort the rest
   await Promise.allSettled(
-    makes.map(async (make) => {
-      try {
-        const { listings } = await fetchAutoScout(make, 'ES', 1)
-        allListings.push(...listings)
-      } catch (err) {
-        console.warn(`[priceIndex] ES/${make}:`, err instanceof Error ? err.message : err)
-      }
-    })
+    makes.flatMap(make =>
+      Array.from({ length: ES_PAGES }, (_, i) => i + 1).map(async page => {
+        try {
+          const { listings, total } = await fetchAutoScout(make, 'ES', page)
+          allListings.push(...listings)
+          // Stop fetching further pages if this make has fewer than a full page
+          if (listings.length === 0 || (total > 0 && page * 20 >= total)) return
+        } catch (err) {
+          console.warn(`[priceIndex] ES/${make}/p${page}:`, err instanceof Error ? err.message : err)
+        }
+      })
+    )
   )
 
   const index = buildIndex(allListings)
@@ -72,17 +92,18 @@ export function lookupSpanishPrice(
   model: string,
   year: number
 ): number | null {
-  // Exact bucket match
+  // 1. Exact bucket match
   const exact = index.get(indexKey(make, model, year))
   if (exact) return exact
 
-  // Widen search: adjacent years ±2
-  for (const delta of [1, -1, 2, -2]) {
+  // 2. Same model, adjacent year buckets ±4 years
+  for (const delta of [2, -2, 4, -4, 6, -6]) {
     const adj = index.get(indexKey(make, model, year + delta))
     if (adj) return adj
   }
 
-  // Fallback: any listing of this make in a broad year range (±3)
+  // 3. Same make, any model, closest year bucket (within 4-year window).
+  //    Only used as a last resort — caller should treat this price as approximate.
   let closestKey: string | null = null
   let closestDelta = Infinity
   for (const [key] of index.entries()) {

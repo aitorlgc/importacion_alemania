@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { fetchAutoScout } from '@/lib/scrapers/autoscout'
+import { fetchAutoScout, type AScoutListing } from '@/lib/scrapers/autoscout'
 import { buildSpanishPriceIndex, lookupSpanishPrice } from '@/lib/scrapers/priceIndex'
 import { getCache, setCache, getCacheAge } from '@/lib/cache'
 import type { Car } from '@/lib/types'
@@ -12,6 +12,8 @@ export const TOP_BRANDS = [
 ]
 
 const TTL_MS = 2 * 60 * 60 * 1000 // 2 hours
+// Fetch 3 DE pages per make (~60 German listings per brand) for a wider opportunity set
+const DE_PAGES = 3
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -22,7 +24,7 @@ export async function GET(req: NextRequest) {
     ? makesParam.split(',').map(m => m.trim().toLowerCase()).filter(Boolean)
     : TOP_BRANDS
 
-  const cacheKey = `live::${makes.slice().sort().join(',')}`
+  const cacheKey = `live-v2::${makes.slice().sort().join(',')}`
 
   if (!forceRefresh) {
     const cached = getCache<Car[]>(cacheKey)
@@ -38,10 +40,14 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Fetch German listings and Spanish price index in parallel
-  const [deResults, spIndex] = await Promise.all([
+  // Fetch German listings (multiple pages) and Spanish price index in parallel
+  const [dePageResults, spIndex] = await Promise.all([
     Promise.allSettled(
-      makes.map(make => fetchAutoScout(make, 'DE', 1))
+      makes.flatMap(make =>
+        Array.from({ length: DE_PAGES }, (_, i) =>
+          fetchAutoScout(make, 'DE', i + 1).then(r => ({ make, listings: r.listings }))
+        )
+      )
     ),
     buildSpanishPriceIndex(makes),
   ])
@@ -50,16 +56,21 @@ export async function GET(req: NextRequest) {
   const errors: string[] = []
   let id = 0
 
-  deResults.forEach((result, i) => {
+  // Deduplicate by listing id to avoid showing the same car from multiple page fetches
+  const seenIds = new Set<string>()
+
+  dePageResults.forEach(result => {
     if (result.status === 'rejected') {
       const msg = result.reason instanceof Error ? result.reason.message : String(result.reason)
-      errors.push(`${makes[i]}: ${msg}`)
+      errors.push(msg)
       console.warn('[live/route]', msg)
       return
     }
 
-    for (const listing of result.value.listings) {
+    for (const listing of result.value.listings as AScoutListing[]) {
       if (listing.price <= 0 || listing.year < 2005) continue
+      if (listing.id && seenIds.has(listing.id)) continue
+      if (listing.id) seenIds.add(listing.id)
 
       const spPrice = lookupSpanishPrice(spIndex, listing.make, listing.model, listing.year)
       if (!spPrice || spPrice <= 0) continue
